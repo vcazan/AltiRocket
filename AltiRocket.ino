@@ -8,19 +8,29 @@
 
 Adafruit_BMP085_Unified bmp = Adafruit_BMP085_Unified(10085);
 
-SoftwareSerial mySerial(10, 11); // RX, TX
+SoftwareSerial mySerial(12, 11); // RX, TX
 
-float curAlti, baseline, temperature; 
+float curAlti, baseline, temperature,clock; 
 int incomingByte = 0;   // for incoming serial DOWNLINK
 boolean updateStats = false;
 boolean first = true;
 int ESET,ESTAT;
 
+int countdown=20;
+int fps=1000;
+int missionStatus; // 0 - standby mode 1-countdown mode 2-launch mode
+
+int red = 7;
+int blue = 8;
+int green = 9;
+
 struct config_t
 {
     float min;
     float max;
+    float alti;
     float temp;
+    int clock;
 } stats;
 
 struct _settings
@@ -40,14 +50,15 @@ void displaySensorDetails(void)
     Serial.println("------------------------------------");
     Serial.println("                 DEBUG              ");
     Serial.println("------------------------------------");
-    Serial.print  ("Sensor:       "); Serial.println(sensor.name);
-    Serial.print  ("Driver Ver:   "); Serial.println(sensor.version);
-    Serial.print  ("Unique ID:    "); Serial.println(sensor.sensor_id);
-    Serial.print  ("Max Value:    "); Serial.print(sensor.max_value); Serial.println(" hPa");
-    Serial.print  ("Min Value:    "); Serial.print(sensor.min_value); Serial.println(" hPa");
-    Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println(" hPa");  
-    Serial.print  ("Stats Lenght:   "); Serial.println(ESTAT); 
-    Serial.print  ("Settings Start:   "); Serial.println(ESET); 
+    Serial.print  ("FW:            "); Serial.println("v0.1");
+    Serial.print  ("Sensor:        "); Serial.println(sensor.name);
+    Serial.print  ("Driver Ver:    "); Serial.println(sensor.version);
+    Serial.print  ("Unique ID:     "); Serial.println(sensor.sensor_id);
+    Serial.print  ("Max Value:     "); Serial.print(sensor.max_value); Serial.println(" hPa");
+    Serial.print  ("Min Value:     "); Serial.print(sensor.min_value); Serial.println(" hPa");
+    Serial.print  ("Resolution:    "); Serial.print(sensor.resolution); Serial.println(" hPa");  
+    Serial.print  ("Stats Lenght:  "); Serial.println(ESTAT); 
+    Serial.print  ("Settings Start: "); Serial.println(ESET); 
     Serial.println("------------------------------------");
     Serial.println("");
   }
@@ -71,10 +82,16 @@ void setup()
   mySerial.begin(9600);
   Serial.begin(9600);
   
+  pinMode(red, OUTPUT);
+  pinMode(green, OUTPUT);
+  pinMode(blue, OUTPUT);
+  
   mySerial.println("SYSTEM REBOOT");
   Serial.println("SYSTEM REBOOT");
 
   ESTAT = EEPROM_readAnything(0, stats);
+  
+  Serial.println(stats.max);
   ESET = ESTAT+1;
   EEPROM_readAnything(ESET, settings);
   
@@ -87,21 +104,51 @@ void setup()
 
     while(1);
   }
-  
+  clock = millis();
   /* Display some basic information on this sensor */
   displaySensorDetails();
+  
+  
   
 }
 
 void loop()
 {
   
+  if (missionStatus == 1){
+    
+    switch(countdown){
+      default:
+       Serial.print("T-");
+       Serial.println(countdown);
+       mySerial.print("T-");
+       mySerial.println(countdown);
+     case 20:
+       settings.DOWNLINK = true;
+       settings.DEBUG = true;
+       settings.DATA = true;
+       break;
+     case 0:
+       fps = 10;
+       missionStatus = 2;
+       Serial.println("*********************Launch***********************");
+       mySerial.println("*********************Launch***********************");
+       break;
+     case 2:
+       clock = millis();
+       break;
+    }
+
+    countdown--;
+  
+  }
+  
     /* Get a new sensor event */ 
   sensors_event_t event;
   bmp.getEvent(&event);
  
   /* Display the results (barometric pressure is measure in hPa) */
-  if (event.pressure || settings.DATA == true)
+  if (event.pressure && settings.DATA == true)
   {
       /* Display atmospheric pressue in hPa */
       
@@ -168,32 +215,36 @@ void loop()
   }
   
   if (settings.DOWNLINK){
-      mySerial.print("EEPROM Max: ");
+      mySerial.print("Max Alti: ");
       mySerial.print(stats.max);
-      mySerial.print(" Min: ");
-      mySerial.print(stats.min);
       mySerial.print(" Temp @ Max: ");
-      mySerial.println(stats.temp);
+      mySerial.print(stats.temp);
+      mySerial.print(" (R)Altitude(m): ");
+      mySerial.print(stats.alti);
+      mySerial.print(" Clock: ");
+      mySerial.print(stats.clock);
       mySerial.println("");
   }
 
 
   if (settings.DEBUG){
-      Serial.print("EEPROM Max: ");
+      Serial.print("Max Alti: ");
       Serial.print(stats.max);
-      Serial.print(" Min: ");
-      Serial.print(stats.min);
       Serial.print(" Temp @ Max: ");
       Serial.print(stats.temp);
-      Serial.print(" DEBUG VAL:");
-      Serial.print(settings.DEBUG);
+      Serial.print(" (R)Altitude(m): ");
+      Serial.print(stats.alti);
+      Serial.print(" Clock: ");
+      Serial.print(stats.clock);
       Serial.println("");
 
   }
     
-  if (curAlti > (stats.max + 1)){
+  if (curAlti > stats.max && missionStatus == 2){
        stats.max = curAlti;
        stats.temp = temperature;
+       stats.clock = (millis() - clock)-2000;
+       stats.alti = curAlti - baseline;
        saveStats();
   }
   //if (curAlti < stats.min){
@@ -206,9 +257,10 @@ void loop()
       
       if (Serial.available() > 0) {
           incomingByte = Serial.read();
-      }else if (mySerial.available() > 0){
+      }else{
           incomingByte = mySerial.read();
       }
+      Serial.println(incomingByte);
       switch (incomingByte) {
           case 'd':
           case 'D':
@@ -256,8 +308,42 @@ void loop()
             else if (settings.DATA == false){
                 settings.DATA = true;
             }
+            saveSettings();
           case 13://n
           case 10://r
+            break;
+          case 42:
+            missionStatus = 1;
+            fps = 850;
+            Serial.println("Starting CountDown");
+            break;
+          case 33: //!
+            missionStatus = 0;
+            Serial.println("DATA LOCK");
+            mySerial.println("DATA LOCK");
+            fps = 1000;
+            break;
+          case 'u':
+          case 'U':
+            if (settings.DEBUG){
+              Serial.print("Altitude:    "); 
+              Serial.print(curAlti); 
+              Serial.println(" m");
+              Serial.print("Ali Change:    "); 
+              Serial.print(curAlti-baseline); 
+              Serial.println(" m");
+              Serial.println("");
+              
+            }
+            if (settings.DOWNLINK){
+              mySerial.print("Altitude:    "); 
+              mySerial.print(curAlti); 
+              mySerial.println(" m");
+              mySerial.print("Ali Change:    "); 
+              mySerial.print(curAlti-baseline); 
+              mySerial.println(" m");
+              mySerial.println("");
+            }
             break;
           default:
             //Invalid option
@@ -272,8 +358,37 @@ void loop()
       }
         
   }
+  if (missionStatus == 0){
+    digitalWrite(red,HIGH);
+    digitalWrite(blue,LOW);
+    digitalWrite(green,LOW);
+  }
+  if (missionStatus == 1){
+    digitalWrite(red,LOW);
+    digitalWrite(blue,HIGH);
+    digitalWrite(green,LOW);
+  }
+  if (missionStatus == 2){
+    digitalWrite(red,LOW);
+    digitalWrite(blue,LOW);
+    digitalWrite(green,HIGH);
+  }
+  
+  delay(fps);  
+  
+  if (missionStatus == 0){
+    digitalWrite(red,HIGH);
+    digitalWrite(blue,LOW);
+    digitalWrite(green,LOW);
+  }else{
+    digitalWrite(blue,LOW);
+    digitalWrite(green,LOW);
+    digitalWrite(red,LOW);
+  }
+    
+    
 
-  delay(1000);  
+
 }
 
 void printStatus(){
@@ -311,7 +426,7 @@ void saveSettings(){
 
 void saveStats(){
   
-    EEPROM_writeAnything(ESET, stats);
+    EEPROM_writeAnything(0, stats);
     
     Serial.println("New Stat Saved");
     mySerial.println("New Stat Saved");
