@@ -24,6 +24,8 @@ int blue = 8;
 int green = 9;
 
 float time;
+int missionStart;
+int missionTime;
 
 struct config_t {
     float min;
@@ -94,7 +96,7 @@ void setup() {
         stats.maxClock = millis();
     }
     ESET = ESTAT + 1;
-    EEPROM_readAnything(ESET, settings);
+    ESET = EEPROM_readAnything(ESET, settings);
 
     /* Initialise the sensor */
     if (!bmp.begin()) {
@@ -117,14 +119,16 @@ void loop() {
             default: sendSerialData("T-");
             sendSerialDataln(String(countdown));
         case 20:
-                settings.DOWNLINK = true;
+            settings.DOWNLINK = true;
             settings.DEBUG = true;
             settings.DATA = true;
+            missionStart = millis();
             break;
         case 0:
-                fps = 10;
+            fps = 10;
             missionStatus = 2;
             sendSerialDataln("*********************Launch***********************");
+            missionStart = millis();
             break;
         case 2:
                 clock = millis();
@@ -141,56 +145,49 @@ void loop() {
 
     /* Display the results (barometric pressure is measure in hPa) */
     if (event.pressure && settings.DATA == true) {
-        /* Display atmospheric pressue in hPa */
-
-
-        sendSerialData("Pressure:    ");
-        sendSerialData(String(event.pressure));
-        sendSerialDataln(" hPa");
-
 
         /* First we get the current temperature from the BMP085 */
         bmp.getTemperature( & temperature);
-
-
-        sendSerialData("Temperature: ");
-        sendSerialData(String(temperature));
-        sendSerialDataln(" C");
 
         /* Then convert the atmospheric pressure, and SLP to altitude         */
         /* Update this next line with the current SLP for better results      */
         float seaLevelPressure = SENSORS_PRESSURE_SEALEVELHPA;
 
         curAlti = bmp.pressureToAltitude(seaLevelPressure, event.pressure);
-
+        
+        missionTime = millis() - missionStart;
+        
         if (first) {
             first = false;
             baseline = curAlti;
         }
+        //RealTimeData, Pressure (hpa),Temperature(c),Current Alititude (m), Reletive Altitude to Launch(m),millis(),Mission Time,checksum
+        String str = "$ARRTD,"+String(event.pressure)+","+String(temperature)+","+String(curAlti)+","+String(curAlti - baseline)+","+String(time)+","+String(missionTime);
 
-        sendSerialData("Altitude:    ");
-        sendSerialData(String(curAlti));
-        sendSerialDataln(" m");
-        sendSerialData("Ali Change:    ");
-        sendSerialData(String(curAlti - baseline));
-        sendSerialDataln(" m");
-        sendSerialDataln("");
+        int str_len = str.length() + 1; 
+        char char_array[str_len];
+        
+        str.toCharArray(char_array, str_len);
+        str = str + "," + String(getCheckSum(char_array)) + "*";
+        
+        sendSerialDataln(str);
+
 
 
     } else {
         sendSerialDataln("Sensor error");
     }
-
-    sendSerialData("Max Alti: ");
-    sendSerialData(String(stats.max));
-    sendSerialData(" Temp @ Max: ");
-    sendSerialData(String(stats.temp));
-    sendSerialData(" (R)Altitude(m): ");
-    sendSerialData(String(stats.alti));
-    sendSerialData("Max Alti Time ");
-    sendSerialData(String(stats.maxClock));
-    sendSerialDataln("");
-
+    //Memory, Max Altitude , Max Temperature(c), Max Alititude (m), Time From Launch to Max Alti,Time To Max,checksum
+    String str = "$ARMEM,"+String(stats.max)+","+String(stats.temp)+","+String(stats.alti)+","+String(stats.maxClock)+","+stats.missionTime;
+    
+    int str_len = str.length() + 1; 
+    char char_array[str_len];
+    
+    str.toCharArray(char_array, str_len);
+    str = str + "," + String(getCheckSum(char_array)) + "*";
+    
+    sendSerialDataln(str);
+    
     if (curAlti > stats.max && missionStatus == 2) {
         stats.max = curAlti;
         stats.temp = temperature;
@@ -262,7 +259,7 @@ void loop() {
         case 33: //!
             missionStatus = 0;
             countdown = 20;
-            stats.missionTime = millis() - clock;
+            stats.missionTime = millis() - missionStart;
             sendSerialDataln("DATA LOCK");
             saveStats();
             fps = 1000;
@@ -294,12 +291,6 @@ void loop() {
         }
     }
     updateStatusLED(0);
-
-
-
-    sendSerialData("Time: ");
-    sendSerialDataln(String(millis() - time));
-
 }
 
 void printStatus() {
@@ -397,4 +388,14 @@ void updateStatusLED(int state) {
 
 
 
+}
+
+uint8_t getCheckSum(char *string)
+{
+  int XOR = 0;	
+  for (int i = 0; i < strlen(string); i++) 
+  {
+    XOR = XOR ^ string[i];
+  }
+  return XOR;
 }
