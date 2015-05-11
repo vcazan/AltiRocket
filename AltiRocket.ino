@@ -23,6 +23,7 @@ int red = 7;
 int blue = 8;
 int green = 9;
 
+int reset = 3;
 float time;
 int missionStart;
 int missionTime;
@@ -68,7 +69,7 @@ void displaySensorDetails(void) {
     sendSerialData(String(sensor.resolution));
     sendSerialDataln(" hPa");
     sendSerialData("Stats Lenght:  ");
-    sendSerialDataln(String(ESTAT));
+    sendSerialDataln(String(ESET));
     sendSerialDataln("------------------------------------");
     sendSerialDataln("");
 
@@ -80,11 +81,13 @@ void displaySensorDetails(void) {
 void setup() {
     mySerial.begin(9600);
     Serial.begin(9600);
-
+    
+    digitalWrite(reset,HIGH);
     pinMode(red, OUTPUT);
     pinMode(green, OUTPUT);
     pinMode(blue, OUTPUT);
-
+    pinMode(reset, OUTPUT);
+    
     sendSerialDataln("SYSTEM REBOOT");
 
     ESTAT = EEPROM_readAnything(0, stats);
@@ -96,7 +99,7 @@ void setup() {
         stats.maxClock = millis();
     }
     ESET = ESTAT + 1;
-    ESET = EEPROM_readAnything(ESET, settings);
+    EEPROM_readAnything(ESET, settings);
 
     /* Initialise the sensor */
     if (!bmp.begin()) {
@@ -273,6 +276,9 @@ void loop() {
             sendSerialData(String(curAlti - baseline));
             sendSerialDataln(" m");
             sendSerialDataln("");
+            break;
+        case 'Q':
+            digitalWrite(reset,LOW);
             break;
         default:
             //Invalid option
